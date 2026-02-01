@@ -1,41 +1,69 @@
-version: "3"
 services:
   # 1. The Database (Cassandra)
   cassandra:
-    image: cassandra:3.11
+    image: cassandra:4.1
+    container_name: cassandra
+    restart: unless-stopped
     volumes:
       - cassandradata:/var/lib/cassandra
-    ports:
-      - "9042:9042"
+    environment:
+      - CASSANDRA_CLUSTER_NAME=TheHive
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'describe cluster'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
   # 2. The Search Engine (Elasticsearch)
   elasticsearch:
-    image: elasticsearch:7.11.1
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.24
+    container_name: elasticsearch
+    restart: unless-stopped
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
     volumes:
       - elasticsearchdata:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q 'green\\|yellow'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
 
-  # 3. TheHive (The Application)
+  # 3. TheHive 5 (The Application)
   thehive:
-    image: thehiveproject/thehive:4.1.19
+    image: strangebee/thehive:5.4
+    container_name: thehive
+    restart: unless-stopped
     depends_on:
-      - cassandra
-      - elasticsearch
+      cassandra:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
     ports:
       - "9000:9000"
     environment:
-      - THP_ZENKO_GO_URL=http://zenko:8002
+      - JVM_OPTS=-Xms1g -Xmx1g
+    volumes:
+      - thehivedata:/data
+      - thehiveconfig:/etc/thehive
     command:
-      - --no-config-db
       - --cql-hostnames
+      - cassandra
+      - --cql-username
+      - cassandra
+      - --cql-password
       - cassandra
       - --index-backend
       - elasticsearch
       - --es-hostnames
       - elasticsearch
+      - --secret
+      - "SuperSecretKeyForTheHive2026RiskEngine!"
 
 volumes:
   cassandradata:
   elasticsearchdata:
+  thehivedata:
+  thehiveconfig:
