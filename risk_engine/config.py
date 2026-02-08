@@ -79,6 +79,34 @@ RISK_THRESHOLDS = {
 }
 
 # ---------------------------------------------------------------------------
+# B2C Consumer Identity-Theft Scoring Profile
+# ---------------------------------------------------------------------------
+# Exposure types map to base severity scores (0-100 scale).
+# Used instead of ASSET_VALUES when a case is tagged profile:consumer.
+
+B2C_EXPOSURE_WEIGHTS = {
+    "email_only": 15,       # Low — change password, enable MFA
+    "phone": 25,            # Moderate — SIM swap risk
+    "credit_card": 40,      # Moderate — replaceable, fraud protection exists
+    "bank_account": 60,     # High — direct financial access
+    "drivers_license": 70,  # High — synthetic identity risk
+    "medical_records": 80,  # Severe — medical identity theft
+    "ssn": 85,              # Severe — credit fraud, tax fraud, long recovery
+    "ssn_and_dl": 95,       # Critical — full identity takeover
+}
+
+DEFAULT_EXPOSURE_TYPE = "email_only"
+
+# Severity thresholds for B2C composite score (likelihood × exposure weight)
+B2C_SEVERITY_THRESHOLDS = {
+    "critical": 80,
+    "high": 60,
+    "medium": 35,
+    "low": 15,
+    # anything below "low" is "info"
+}
+
+# ---------------------------------------------------------------------------
 # Watch-mode defaults
 # ---------------------------------------------------------------------------
 

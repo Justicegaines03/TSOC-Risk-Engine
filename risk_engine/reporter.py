@@ -42,7 +42,7 @@ def _verdict_summary(obs: ObservableRisk) -> str:
 
 
 def _recommendations(level: str) -> List[str]:
-    """Return recommended actions based on risk level."""
+    """Return recommended actions for B2B cases based on risk level."""
     base = {
         "Critical": [
             "Escalate to incident commander immediately",
@@ -74,46 +74,121 @@ def _recommendations(level: str) -> List[str]:
     return base.get(level, ["Review case manually"])
 
 
+def _b2c_recommendations(level: str) -> List[str]:
+    """Return recommended recovery actions for consumer identity-theft cases."""
+    base = {
+        "Critical": [
+            "Freeze credit at all three bureaus (Equifax, Experian, TransUnion)",
+            "File an identity theft report at IdentityTheft.gov (FTC)",
+            "File a police report with local law enforcement",
+            "Contact the IRS Identity Protection Specialized Unit",
+            "Notify health insurance provider of potential medical identity theft",
+            "Place extended fraud alert (7 years) with credit bureaus",
+        ],
+        "High": [
+            "Freeze credit at all three bureaus immediately",
+            "Place fraud alerts with all three credit bureaus",
+            "Change all financial account passwords and enable MFA",
+            "Monitor bank and credit card statements daily for 90 days",
+            "Consider enrolling in an identity theft protection service",
+        ],
+        "Medium": [
+            "Place an initial fraud alert (1 year) with credit bureaus",
+            "Change compromised account passwords immediately",
+            "Enable multi-factor authentication on all accounts",
+            "Review credit reports at AnnualCreditReport.com",
+            "Monitor accounts weekly for 60 days",
+        ],
+        "Low": [
+            "Change the compromised password immediately",
+            "Enable multi-factor authentication on the affected account",
+            "Monitor the account for suspicious activity",
+            "Check haveibeenpwned.com for additional exposures",
+        ],
+        "Info": [
+            "No immediate action required",
+            "Monitor with free annual credit report",
+            "Consider enabling MFA on sensitive accounts as a precaution",
+        ],
+    }
+    return base.get(level, ["Consult with a senior analyst"])
+
+
 def generate_report(assessment: CaseRiskAssessment) -> str:
-    """Build a full markdown risk report."""
+    """Build a full markdown risk report.
+
+    Produces a B2B report (ALE / dollar values) or a B2C consumer report
+    (Recovery Difficulty Score / identity-theft actions) based on
+    assessment.profile.
+    """
     risk = assessment.risk_score
     if risk is None:
         return "**Error:** Case has not been scored yet."
 
+    is_b2c = assessment.profile == "consumer"
     indicator = _risk_emoji(risk.risk_level)
+
+    # --- Header ---
     lines = [
-        f"# Risk Assessment Report",
+        f"# {'Consumer Identity-Theft' if is_b2c else 'Risk'} Assessment Report",
         "",
         f"**Case:** {assessment.case_title} (`{assessment.case_id}`)",
         f"**Assessed:** {assessment.timestamp}",
+        f"**Profile:** {'Consumer (B2C)' if is_b2c else 'Business (B2B)'}",
         "",
         "---",
         "",
         "## Executive Summary",
         "",
-        (
-            f"{indicator} This case has a **{risk.risk_level}** risk level "
-            f"with an estimated annual loss exposure of **${risk.ale:,.2f}**."
-        ),
-        "",
-        "---",
-        "",
-        "## Risk Calculation",
-        "",
-        f"| Metric | Value |",
-        f"|--------|-------|",
-        f"| Likelihood | {risk.likelihood:.2%} |",
-        f"| Asset Type | {assessment.asset_type} |",
-        f"| Sensitivity | {assessment.sensitivity} |",
-        f"| Impact (SLE) | ${risk.impact_dollars:,.0f} |",
-        f"| **ALE (Annualized Loss)** | **${risk.ale:,.2f}** |",
-        f"| **Risk Level** | **{risk.risk_level}** |",
-        "",
-        "> *ALE = Likelihood x Impact (Single Loss Expectancy)*",
-        "",
     ]
 
-    # Observable breakdown
+    if is_b2c:
+        lines.append(
+            f"{indicator} This case has a **{risk.risk_level}** severity level "
+            f"with a recovery difficulty score of **{risk.ale:.1f} / 100**."
+        )
+    else:
+        lines.append(
+            f"{indicator} This case has a **{risk.risk_level}** risk level "
+            f"with an estimated annual loss exposure of **${risk.ale:,.2f}**."
+        )
+
+    lines += ["", "---", "", "## Risk Calculation", ""]
+
+    # --- Scoring table ---
+    lines += [
+        "| Metric | Value |",
+        "|--------|-------|",
+        f"| Likelihood | {risk.likelihood:.2%} |",
+    ]
+
+    if is_b2c:
+        lines += [
+            f"| Exposure Type | {assessment.exposure_type} |",
+            f"| Exposure Severity | {risk.impact_dollars:.0f} / 100 |",
+            f"| **Recovery Difficulty** | **{risk.ale:.1f} / 100** |",
+            f"| **Severity Level** | **{risk.risk_level}** |",
+        ]
+        lines += [
+            "",
+            "> *Recovery Difficulty = Likelihood x Exposure Severity*",
+            "",
+        ]
+    else:
+        lines += [
+            f"| Asset Type | {assessment.asset_type} |",
+            f"| Sensitivity | {assessment.sensitivity} |",
+            f"| Impact (SLE) | ${risk.impact_dollars:,.0f} |",
+            f"| **ALE (Annualized Loss)** | **${risk.ale:,.2f}** |",
+            f"| **Risk Level** | **{risk.risk_level}** |",
+        ]
+        lines += [
+            "",
+            "> *ALE = Likelihood x Impact (Single Loss Expectancy)*",
+            "",
+        ]
+
+    # --- Observable breakdown ---
     if assessment.observables:
         lines += [
             "---",
@@ -148,12 +223,12 @@ def generate_report(assessment: CaseRiskAssessment) -> str:
                 )
             lines.append("")
 
-    # Recommendations
-    recs = _recommendations(risk.risk_level)
+    # --- Recommendations ---
+    recs = _b2c_recommendations(risk.risk_level) if is_b2c else _recommendations(risk.risk_level)
     lines += [
         "---",
         "",
-        "## Recommended Actions",
+        f"## Recommended {'Recovery' if is_b2c else ''} Actions",
         "",
     ]
     for i, rec in enumerate(recs, 1):

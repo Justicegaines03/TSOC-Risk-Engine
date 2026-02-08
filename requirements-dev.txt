@@ -1,0 +1,12 @@
+# Development and testing dependencies
+# Install with: pip install -r requirements-dev.txt
+
+# Testing
+pytest>=8.0.0
+pytest-cov>=5.0.0
+
+# Linting
+ruff>=0.4.0
+
+# Runtime deps (also needed for tests)
+-r risk_engine/requirements.txt

@@ -1,0 +1,97 @@
+# SOC Risk Engine — GitLab CI/CD Pipeline
+#
+# Stages:
+#   lint  — code quality checks
+#   test  — unit tests
+#   build — Docker image build
+#   deploy — manual deployment trigger
+
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  PYTHON_VERSION: "3.12"
+
+# ---------------------------------------------------------------------------
+# Lint
+# ---------------------------------------------------------------------------
+
+lint:
+  stage: lint
+  image: python:${PYTHON_VERSION}-slim
+  cache:
+    key: pip-cache
+    paths:
+      - .pip-cache/
+  before_script:
+    - pip install ruff
+  script:
+    - ruff check risk_engine/ tests/
+  allow_failure: false
+
+# ---------------------------------------------------------------------------
+# Test
+# ---------------------------------------------------------------------------
+
+test:
+  stage: test
+  image: python:${PYTHON_VERSION}-slim
+  cache:
+    key: pip-cache
+    paths:
+      - .pip-cache/
+  before_script:
+    - pip install -r requirements-dev.txt
+  script:
+    - python -m pytest tests/ -v --tb=short --junitxml=report.xml
+  artifacts:
+    when: always
+    reports:
+      junit: report.xml
+    expire_in: 30 days
+
+# ---------------------------------------------------------------------------
+# Build
+# ---------------------------------------------------------------------------
+
+build:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  variables:
+    DOCKER_TLS_CERTDIR: "/certs"
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - docker build -t "$CI_REGISTRY_IMAGE/risk-engine:$CI_COMMIT_SHORT_SHA" ./risk_engine
+    - docker build -t "$CI_REGISTRY_IMAGE/risk-engine:latest" ./risk_engine
+    - docker push "$CI_REGISTRY_IMAGE/risk-engine:$CI_COMMIT_SHORT_SHA"
+    - docker push "$CI_REGISTRY_IMAGE/risk-engine:latest"
+  only:
+    - main
+    - tags
+
+# ---------------------------------------------------------------------------
+# Deploy (manual trigger)
+# ---------------------------------------------------------------------------
+
+deploy:
+  stage: deploy
+  image: docker:latest
+  services:
+    - docker:dind
+  when: manual
+  script:
+    - echo "Deploy to target environment"
+    - echo "Override this job with your deployment steps"
+    - echo "Image available at $CI_REGISTRY_IMAGE/risk-engine:$CI_COMMIT_SHORT_SHA"
+  only:
+    - main
+    - tags
+  environment:
+    name: production

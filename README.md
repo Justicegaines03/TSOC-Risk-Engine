@@ -1,39 +1,92 @@
 # SOC Risk Engine
 
-A platform to quantify risk powered by TheHive for incident response and case management.
+A quantitative risk scoring platform for security operations centers, powered by TheHive and Cortex.
 
-## Prerequisites
-
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) installed and running
-- `docker-compose` CLI (included with Docker Desktop)
+Automatically scores SOC cases by enriching observables through Cortex analyzers and computing risk using industry-standard models. Supports both **business (B2B)** cases using Annualized Loss Expectancy and **consumer (B2C)** identity-theft cases using Recovery Difficulty Scoring.
 
 ## Quick Start
 
-1. **Start Docker Desktop** and ensure the whale icon in your menu bar is steady (not animating)
+```bash
+git clone <your-repo-url>
+cd SOC-Risk-Engine
+make setup
+```
 
-2. **Configure environment variables:**
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env` and set your secret key:
-   ```bash
-   # Generate a secret key
-   openssl rand -base64 32
-   ```
-   Paste the generated key as `THEHIVE_SECRET` in `.env`
+That's it. The bootstrap script handles environment configuration, service startup, and API key generation.
 
-3. **Start all services:**
-   ```bash
-   docker-compose up -d
-   ```
+For detailed setup instructions, see [ONBOARDING.md](ONBOARDING.md).
 
-4. **Wait for initialization** (~1-2 minutes on first run):
-   ```bash
-   docker-compose logs -f thehive
-   ```
-   Wait until you see the application is ready.
+## Services
 
-5. **Access TheHive:** Open http://localhost:9000
+| Service       | Port | Description                          |
+|---------------|------|--------------------------------------|
+| TheHive       | 9000 | Incident response and case management |
+| Cortex        | 9001 | Observable analysis engine           |
+| Risk Engine   | --   | Automated risk scoring (watch mode)  |
+| Cassandra     | 9042 | Database backend                     |
+| Elasticsearch | 9200 | Search and indexing                   |
+
+## Dual-Profile Scoring
+
+### Business (B2B) -- ALE Model
+
+Tag cases with `asset:<type>` and `sensitivity:<level>`. The engine calculates Annualized Loss Expectancy:
+
+```
+ALE = Likelihood (from Cortex verdicts) x Impact (Asset Value x Sensitivity)
+```
+
+### Consumer (B2C) -- Identity Theft
+
+Tag cases with `profile:consumer` and `exposure:<type>`. The engine calculates Recovery Difficulty:
+
+```
+Recovery Difficulty = Likelihood x Exposure Severity (0-100)
+```
+
+For the full consumer workflow and student analyst guide, see [docs/B2C-CONSUMER-GUIDE.md](docs/B2C-CONSUMER-GUIDE.md).
+
+## Common Commands
+
+```bash
+make setup        # First-time setup (one command)
+make status       # Check service health
+make logs         # Tail all service logs
+make test         # Run unit tests
+make smoke        # Integration smoke test
+make down         # Stop all services
+make reset        # Destroy data and re-setup
+```
+
+## Documentation
+
+- [ONBOARDING.md](ONBOARDING.md) -- Full setup walkthrough and customization
+- [docs/B2C-CONSUMER-GUIDE.md](docs/B2C-CONSUMER-GUIDE.md) -- Consumer identity-theft scoring guide
+- [docs/MISP-INTEGRATION.md](docs/MISP-INTEGRATION.md) -- Connecting to your MISP instance
+- [CONTRIBUTING.md](CONTRIBUTING.md) -- How to contribute and extend the engine
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                     Risk Engine                         │
+│           (score / watch / health CLI)                  │
+│  ┌──────────────────┐  ┌──────────────────────────┐    │
+│  │ B2B: ALE Scoring │  │ B2C: Recovery Difficulty │    │
+│  └──────────────────┘  └──────────────────────────┘    │
+└───────────┬───────────────────────┬─────────────────────┘
+            │                       │
+    ┌───────▼─────────┐    ┌───────▼──────────┐
+    │    TheHive 5    │    │     Cortex       │
+    │  (Cases, Tasks) │    │  (Analyzers)     │
+    │  localhost:9000 │    │  localhost:9001   │
+    └───────┬─────────┘    └──────────────────┘
+            │
+    ┌───────▼──────────┐   ┌──────────────────┐
+    │   Cassandra      │   │  Elasticsearch   │
+    │   (Database)     │   │  (Search Index)  │
+    └──────────────────┘   └──────────────────┘
+```
 
 ## Default Credentials
 
@@ -41,80 +94,8 @@ A platform to quantify risk powered by TheHive for incident response and case ma
 |----------|-----------------------|----------|
 | TheHive  | `admin@thehive.local` | `secret` |
 
-> **Important:** Change the default password after first login.
-
-## Services
-
-| Service       | Port | Description                          |
-|---------------|------|--------------------------------------|
-| TheHive       | 9000 | Incident response platform           |
-| Cortex        | 9001 | Analysis engine                      |
-| Cassandra     | 9042 | Database backend                     |
-| Elasticsearch | 9200 | Search and indexing engine           |
-
-## MISP Integration
-
-To connect TheHive to your existing MISP instance, see [docs/MISP-INTEGRATION.md](docs/MISP-INTEGRATION.md).
-
-## Common Commands
-
-```bash
-# Start all services
-docker-compose up -d
-
-# Stop all services
-docker-compose down
-
-# View logs
-docker-compose logs -f
-
-# View specific service logs
-docker-compose logs -f thehive
-
-# Restart a specific service
-docker-compose restart thehive
-
-# Check service status
-docker-compose ps
-```
-
-## Troubleshooting
-
-### "Cannot connect to the Docker daemon"
-Make sure Docker Desktop is running (whale icon in menu bar).
-
-### TheHive not accessible
-Wait 1-2 minutes after starting. Check logs with:
-```bash
-docker-compose logs thehive
-```
-
-### Reset everything
-```bash
-docker-compose down -v
-docker-compose up -d
-```
-> **Warning:** This deletes all data.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────┐
-│                   TheHive                       │
-│              (localhost:9000)                   │
-└───────┬───────────────┬───────────────┬─────────┘
-        │               │               │
-┌───────▼─────┐   ┌─────▼─────────┐   ┌─▼───────────┐
-│  Cassandra  │   │ Elasticsearch │   │   Cortex    │
-│  (Database) │   │ (Search Index)│   │  (Analysis) │
-└─────────────┘   └───────────────┘   └─────────────┘
-                                             │
-                                      ┌──────▼──────┐
-                                      │    MISP     │
-                                      │  (External) │
-                                      └─────────────┘
-```
+**Change the default password after first login.**
 
 ## License
 
-See [LICENSE](LICENSE) for details.
+MIT License. See [LICENSE](LICENSE) for details.

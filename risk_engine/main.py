@@ -2,11 +2,13 @@
 SOC Risk Engine — CLI Entry Point
 
 Usage:
-    python -m risk_engine score  --case-id <CASE_ID>
-    python -m risk_engine watch  [--interval 30]
+    python -m risk_engine score   --case-id <CASE_ID>
+    python -m risk_engine watch   [--interval 30]
+    python -m risk_engine health
 
 The "score" command processes a single case.
 The "watch" command polls TheHive for unscored cases on a loop.
+The "health" command checks connectivity to TheHive and Cortex (used by Docker).
 """
 
 from __future__ import annotations
@@ -35,10 +37,17 @@ def process_case(
     hive: TheHiveClient,
     cortex: CortexClient,
     *,
+    profile: str = "",
     asset_type: str = "",
     sensitivity: str = "",
+    exposure_type: str = "",
 ) -> CaseRiskAssessment:
-    """Run the full pipeline for one case: fetch → enrich → score → report."""
+    """Run the full pipeline for one case: fetch → enrich → score → report.
+
+    Supports both B2B (default) and consumer identity-theft profiles.
+    The profile is auto-detected from a ``profile:`` case tag unless
+    overridden via the *profile* argument.
+    """
 
     # 1. Fetch case metadata
     case = hive.get_case(case_id)
@@ -46,13 +55,22 @@ def process_case(
     case_severity = case.get("severity", 2)
     case_tags = case.get("tags", [])
 
-    # Derive asset_type / sensitivity from tags if not overridden
-    if not asset_type:
-        asset_type = _extract_tag(case_tags, "asset:", config.DEFAULT_SENSITIVITY)
-    if not sensitivity:
-        sensitivity = _extract_tag(case_tags, "sensitivity:", config.DEFAULT_SENSITIVITY)
+    # Detect profile from tags if not overridden
+    if not profile:
+        profile = _extract_tag(case_tags, "profile:", "b2b")
 
-    logger.info("Processing case: %s — %s", case_id, case_title)
+    logger.info("Processing case [%s]: %s — %s", profile, case_id, case_title)
+
+    if profile == "consumer":
+        # B2C: derive exposure type from tags
+        if not exposure_type:
+            exposure_type = _extract_tag(case_tags, "exposure:", config.DEFAULT_EXPOSURE_TYPE)
+    else:
+        # B2B: derive asset_type / sensitivity from tags
+        if not asset_type:
+            asset_type = _extract_tag(case_tags, "asset:", config.DEFAULT_SENSITIVITY)
+        if not sensitivity:
+            sensitivity = _extract_tag(case_tags, "sensitivity:", config.DEFAULT_SENSITIVITY)
 
     # 2. Get observables
     observables = hive.get_case_observables(case_id)
@@ -68,8 +86,10 @@ def process_case(
         case_id=case_id,
         case_title=case_title,
         case_severity=case_severity,
+        profile=profile,
         asset_type=asset_type,
         sensitivity=sensitivity,
+        exposure_type=exposure_type,
         observables=obs_risks,
     )
     score_case(assessment)
@@ -80,11 +100,14 @@ def process_case(
     hive.add_task_log(task_id, report_md)
     hive.add_case_tag(case_id, config.SCORED_TAG)
 
+    risk = assessment.risk_score
+    score_label = "severity" if profile == "consumer" else "ALE $"
     logger.info(
-        "Case %s scored: %s (ALE $%,.2f)",
+        "Case %s scored: %s (%s%s)",
         case_id,
-        assessment.risk_score.risk_level if assessment.risk_score else "N/A",
-        assessment.risk_score.ale if assessment.risk_score else 0,
+        risk.risk_level if risk else "N/A",
+        score_label,
+        f"{risk.ale:,.2f}" if risk else "0",
     )
     return assessment
 
@@ -101,19 +124,65 @@ def cmd_score(args: argparse.Namespace) -> None:
         args.case_id,
         hive,
         cortex,
+        profile=args.profile or "",
         asset_type=args.asset_type or "",
         sensitivity=args.sensitivity or "",
+        exposure_type=args.exposure_type or "",
     )
     risk = assessment.risk_score
+    is_b2c = assessment.profile == "consumer"
     if risk:
         print(f"\n{'='*60}")
         print(f"  Case:       {assessment.case_title}")
+        print(f"  Profile:    {'Consumer (B2C)' if is_b2c else 'Business (B2B)'}")
         print(f"  Risk Level: {risk.risk_level}")
         print(f"  Likelihood: {risk.likelihood:.2%}")
-        print(f"  Impact:     ${risk.impact_dollars:,.0f}")
-        print(f"  ALE:        ${risk.ale:,.2f}")
+        if is_b2c:
+            print(f"  Exposure:   {assessment.exposure_type} ({risk.impact_dollars:.0f}/100)")
+            print(f"  Recovery:   {risk.ale:.1f} / 100")
+        else:
+            print(f"  Impact:     ${risk.impact_dollars:,.0f}")
+            print(f"  ALE:        ${risk.ale:,.2f}")
         print(f"{'='*60}\n")
         print("Report posted to TheHive.")
+
+
+def cmd_health(args: argparse.Namespace) -> None:
+    """Check connectivity to TheHive and Cortex. Exits 0 if healthy, 1 otherwise."""
+    import requests
+
+    healthy = True
+
+    # Check TheHive
+    try:
+        resp = requests.get(f"{config.THEHIVE_URL}/api/status", timeout=5)
+        if resp.ok:
+            logger.debug("TheHive is reachable")
+        else:
+            logger.warning("TheHive returned status %d", resp.status_code)
+            healthy = False
+    except Exception:
+        logger.warning("TheHive is unreachable at %s", config.THEHIVE_URL)
+        healthy = False
+
+    # Check Cortex
+    try:
+        resp = requests.get(f"{config.CORTEX_URL}/api/status", timeout=5)
+        if resp.ok:
+            logger.debug("Cortex is reachable")
+        else:
+            logger.warning("Cortex returned status %d", resp.status_code)
+            healthy = False
+    except Exception:
+        logger.warning("Cortex is unreachable at %s", config.CORTEX_URL)
+        healthy = False
+
+    if healthy:
+        print("healthy")
+        sys.exit(0)
+    else:
+        print("unhealthy")
+        sys.exit(1)
 
 
 def cmd_watch(args: argparse.Namespace) -> None:
@@ -175,14 +244,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--case-id", required=True, help="TheHive case ID to score"
     )
     score_p.add_argument(
+        "--profile",
+        default="",
+        help="Override scoring profile (b2b/consumer). Auto-detected from case tags if omitted.",
+    )
+    score_p.add_argument(
         "--asset-type",
         default="",
-        help="Override asset type (workstation/server/database/critical_infra)",
+        help="[B2B] Override asset type (workstation/server/database/critical_infra)",
     )
     score_p.add_argument(
         "--sensitivity",
         default="",
-        help="Override data sensitivity (public/internal/confidential/restricted)",
+        help="[B2B] Override data sensitivity (public/internal/confidential/restricted)",
+    )
+    score_p.add_argument(
+        "--exposure-type",
+        default="",
+        help="[B2C] Override exposure type (email_only/phone/credit_card/bank_account/drivers_license/ssn/medical_records/ssn_and_dl)",
     )
 
     # -- watch --
@@ -193,6 +272,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=config.WATCH_INTERVAL_SECONDS,
         help=f"Polling interval in seconds (default: {config.WATCH_INTERVAL_SECONDS})",
     )
+
+    # -- health --
+    sub.add_parser("health", help="Check connectivity to TheHive and Cortex")
 
     return parser
 
@@ -213,6 +295,8 @@ def main() -> None:
         cmd_score(args)
     elif args.command == "watch":
         cmd_watch(args)
+    elif args.command == "health":
+        cmd_health(args)
     else:
         parser.print_help()
         sys.exit(1)

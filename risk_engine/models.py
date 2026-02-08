@@ -61,8 +61,10 @@ class CaseRiskAssessment:
     case_id: str
     case_title: str
     case_severity: int = 2                                  # TheHive severity 1-4
-    asset_type: str = "server"
-    sensitivity: str = "internal"
+    profile: str = "b2b"                                    # "b2b" or "consumer"
+    asset_type: str = "server"                              # B2B: asset tier
+    sensitivity: str = "internal"                           # B2B: data sensitivity
+    exposure_type: str = "email_only"                       # B2C: exposure category
     observables: List[ObservableRisk] = field(default_factory=list)
     risk_score: Optional[RiskScore] = None
     timestamp: str = field(

@@ -1,0 +1,92 @@
+# SOC Risk Engine — Production Overlay
+#
+# Use with: docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# This overlay adds:
+#   - Memory limits for all services
+#   - Named volume mount points suitable for backup
+#   - Restart policies
+#   - No exposed ports for backend services (only TheHive and Cortex)
+#
+# For TLS termination, place a reverse proxy (nginx, Caddy, Traefik)
+# in front of ports 9000 and 9001.
+
+services:
+  cassandra:
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 1g
+    # In production, do NOT expose Cassandra to the host network.
+    # Remove the ports mapping if present in the base compose.
+
+  elasticsearch:
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 1g
+    environment:
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    # In production, do NOT expose Elasticsearch to the host network.
+
+  cortex:
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+        reservations:
+          memory: 512m
+
+  thehive:
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+        reservations:
+          memory: 1g
+    environment:
+      - JVM_OPTS=-Xms1g -Xmx2g
+
+  risk_engine:
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+        reservations:
+          memory: 128m
+    restart: always
+
+# ---------------------------------------------------------------------------
+# Production Checklist
+# ---------------------------------------------------------------------------
+#
+# 1. SECRETS
+#    - Generate a strong THEHIVE_SECRET (openssl rand -base64 32)
+#    - Store API keys in a secrets manager, not in .env files
+#    - Change the default TheHive admin password
+#
+# 2. TLS
+#    - Place a reverse proxy (nginx/Caddy/Traefik) in front of 9000/9001
+#    - Terminate TLS at the proxy
+#    - Redirect HTTP to HTTPS
+#
+# 3. BACKUPS
+#    - Back up Cassandra data: cassandradata volume
+#    - Back up Elasticsearch indices: elasticsearchdata volume
+#    - Back up TheHive config: thehiveconfig volume
+#    - Use docker volume inspect to find mount paths
+#
+# 4. NETWORKING
+#    - Do NOT expose Cassandra (9042) or Elasticsearch (9200) externally
+#    - Use Docker networks to isolate backend services
+#    - Only expose TheHive (9000) and Cortex (9001) through the proxy
+#
+# 5. MONITORING
+#    - Health checks are built into all services
+#    - Use 'make status' or 'docker compose ps' to verify
+#    - Monitor disk usage on volume mount points
+#    - Set up alerting on container restart events

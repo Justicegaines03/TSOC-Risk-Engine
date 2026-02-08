@@ -66,11 +66,26 @@ def compute_likelihood(results: List[AnalyzerResult]) -> float:
 # Impact
 # -----------------------------------------------------------------------
 
-def compute_impact(asset_type: str, sensitivity: str) -> float:
-    """Compute a dollar-value impact from asset type and data sensitivity.
+def compute_impact(
+    asset_type: str,
+    sensitivity: str,
+    *,
+    profile: str = "b2b",
+    exposure_type: str = "",
+) -> float:
+    """Compute impact from asset type (B2B) or exposure type (B2C).
 
-    Impact ($) = base_asset_value × sensitivity_multiplier
+    B2B:  Impact ($) = base_asset_value × sensitivity_multiplier
+    B2C:  Impact     = exposure_severity_score  (0-100)
     """
+    if profile == "consumer":
+        return float(
+            config.B2C_EXPOSURE_WEIGHTS.get(
+                exposure_type.lower(), config.B2C_EXPOSURE_WEIGHTS[config.DEFAULT_EXPOSURE_TYPE]
+            )
+        )
+
+    # B2B path (default)
     base = config.ASSET_VALUES.get(
         asset_type.lower(), config.DEFAULT_ASSET_VALUE
     )
@@ -84,15 +99,23 @@ def compute_impact(asset_type: str, sensitivity: str) -> float:
 # Risk Level
 # -----------------------------------------------------------------------
 
-def classify_risk(ale: float) -> str:
-    """Map an ALE value to a human-readable risk level."""
-    if ale >= config.RISK_THRESHOLDS["critical"]:
+def classify_risk(ale: float, *, profile: str = "b2b") -> str:
+    """Map a score to a human-readable risk level.
+
+    B2B uses dollar-based ALE thresholds; B2C uses 0-100 severity thresholds.
+    """
+    thresholds = (
+        config.B2C_SEVERITY_THRESHOLDS if profile == "consumer"
+        else config.RISK_THRESHOLDS
+    )
+
+    if ale >= thresholds["critical"]:
         return "Critical"
-    if ale >= config.RISK_THRESHOLDS["high"]:
+    if ale >= thresholds["high"]:
         return "High"
-    if ale >= config.RISK_THRESHOLDS["medium"]:
+    if ale >= thresholds["medium"]:
         return "Medium"
-    if ale >= config.RISK_THRESHOLDS["low"]:
+    if ale >= thresholds["low"]:
         return "Low"
     return "Info"
 
@@ -113,7 +136,12 @@ def score_case(assessment: CaseRiskAssessment) -> RiskScore:
 
     Case-level likelihood is the *maximum* observable likelihood (worst-case)
     because a single highly-malicious indicator is enough to drive risk.
+
+    Supports both B2B (ALE in dollars) and B2C consumer (severity 0-100)
+    profiles via assessment.profile.
     """
+    profile = assessment.profile
+
     # Score each observable
     likelihoods: List[float] = []
     for obs_risk in assessment.observables:
@@ -123,25 +151,33 @@ def score_case(assessment: CaseRiskAssessment) -> RiskScore:
     # Case likelihood = max across observables (worst-case driver)
     case_likelihood = max(likelihoods) if likelihoods else 0.0
 
-    # Impact
-    impact = compute_impact(assessment.asset_type, assessment.sensitivity)
+    # Impact — B2B uses asset value × sensitivity; B2C uses exposure weight
+    impact = compute_impact(
+        assessment.asset_type,
+        assessment.sensitivity,
+        profile=profile,
+        exposure_type=assessment.exposure_type,
+    )
 
-    # ALE
-    ale = case_likelihood * impact
+    # Composite score: ALE for B2B, Recovery Difficulty for B2C
+    composite = case_likelihood * impact
 
     risk = RiskScore(
         likelihood=round(case_likelihood, 4),
-        impact_dollars=impact,
-        ale=round(ale, 2),
-        risk_level=classify_risk(ale),
+        impact_dollars=round(impact, 2),
+        ale=round(composite, 2),
+        risk_level=classify_risk(composite, profile=profile),
     )
     assessment.risk_score = risk
 
+    score_label = "ALE" if profile == "b2b" else "severity"
     logger.info(
-        "Case %s scored: likelihood=%.2f, impact=$%,.0f, ALE=$%,.2f (%s)",
+        "Case %s scored [%s]: likelihood=%.2f, impact=%.2f, %s=%.2f (%s)",
         assessment.case_id,
+        profile,
         risk.likelihood,
         risk.impact_dollars,
+        score_label,
         risk.ale,
         risk.risk_level,
     )

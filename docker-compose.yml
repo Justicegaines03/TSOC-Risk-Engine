@@ -46,6 +46,12 @@ services:
     volumes:
       - cortexdata:/opt/cortex/jobs
       - /var/run/docker.sock:/var/run/docker.sock
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9001/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   # 4. TheHive 5 (The Application)
   thehive:
@@ -83,25 +89,37 @@ services:
       - cortex
       - --cortex-port
       - "9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
-  # 5. Risk Engine (uncomment when ready)
-  # risk_engine:
-  #   build: ./risk_engine
-  #   container_name: risk_engine
-  #   restart: unless-stopped
-  #   depends_on:
-  #     thehive:
-  #       condition: service_started
-  #     cortex:
-  #       condition: service_started
-  #   environment:
-  #     - THEHIVE_URL=http://thehive:9000
-  #     - THEHIVE_API_KEY=${THEHIVE_API_KEY}
-  #     - CORTEX_URL=http://cortex:9001
-  #     - CORTEX_API_KEY=${CORTEX_API_KEY}
-  #     - WATCH_INTERVAL=30
-  #   # Default command is "watch"; override to score a single case:
-  #   # command: ["score", "--case-id", "~123456"]
+  # 5. Risk Engine (Scoring Service)
+  risk_engine:
+    build: ./risk_engine
+    container_name: risk_engine
+    restart: unless-stopped
+    depends_on:
+      thehive:
+        condition: service_started
+      cortex:
+        condition: service_started
+    environment:
+      - THEHIVE_URL=http://thehive:9000
+      - THEHIVE_API_KEY=${THEHIVE_API_KEY:-}
+      - CORTEX_URL=http://cortex:9001
+      - CORTEX_API_KEY=${CORTEX_API_KEY:-}
+      - WATCH_INTERVAL=${WATCH_INTERVAL:-30}
+    healthcheck:
+      test: ["CMD", "python", "-m", "risk_engine", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    # Default command is "watch"; override to score a single case:
+    # docker compose run risk_engine score --case-id ~123456
 
 volumes:
   cassandradata:
