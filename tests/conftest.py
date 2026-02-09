@@ -12,7 +12,6 @@ from risk_engine.models import (
     CaseRiskAssessment,
     Observable,
     ObservableRisk,
-    RiskScore,
 )
 
 

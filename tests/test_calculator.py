@@ -11,7 +11,7 @@ from risk_engine.calculator import (
     score_case,
     score_observable,
 )
-from risk_engine.models import AnalyzerResult, CaseRiskAssessment, ObservableRisk, Observable
+from risk_engine.models import AnalyzerResult, ObservableRisk
 
 
 # -----------------------------------------------------------------------

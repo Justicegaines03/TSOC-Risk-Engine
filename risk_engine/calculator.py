@@ -49,7 +49,6 @@ def compute_likelihood(results: List[AnalyzerResult]) -> float:
     avg = sum(weights) / len(weights)
 
     # Consensus boost
-    malicious_count = sum(1 for r in results if r.level == "malicious")
     unique_analyzers = len({r.analyzer_name for r in results if r.level == "malicious"})
 
     if unique_analyzers >= config.MALICIOUS_CONSENSUS_THRESHOLD:
